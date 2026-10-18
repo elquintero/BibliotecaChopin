@@ -106,8 +106,7 @@ details.d+details.d{border-top:1px solid var(--line)}
 .vol output{flex:0 0 2.6em;text-align:right;color:var(--mut);font-size:13px;font-variant-numeric:tabular-nums}
 .vol.chk label{flex:1 1 auto;display:flex;align-items:center;gap:10px;font-weight:400;cursor:pointer}
 .vol input[type=checkbox]{width:18px;height:18px;padding:0;border:0;min-width:0;accent-color:var(--acc)}
-#nzwrap{padding:12px 18px 6px}
-#nzwrap iframe{display:block;width:100%;max-width:360px;height:auto;aspect-ratio:16/9;border:0;border-radius:12px;background:#000}
+.vol select{flex:1;min-width:0}
 #nzmsg{margin:0;padding:8px 18px 14px;font-size:13px;color:var(--mut)}#nzmsg:empty{display:none}#nzmsg.err{color:var(--err)}
 @media(max-width:520px){.vol label{flex-basis:7.5rem}}
 
@@ -218,7 +217,15 @@ code{font:12px ui-monospace,Consolas,monospace;background:var(--soft);border:1px
       <div class="vol chk">
         <label><input id="nzslp" type="checkbox"> El temporizador de reposo también apaga el ruido</label>
       </div>
-      <div id="nzwrap" hidden><div id="nzp"></div></div>
+      <div class="vol">
+        <label for="nzt">Tipo de ruido</label>
+        <select id="nzt">
+          <option value="white">Blanco</option>
+          <option value="pink">Rosa</option>
+          <option value="brown">Marrón</option>
+        </select>
+      </div>
+      <audio id="nza" loop playsinline preload="auto"></audio>
       <p id="nzmsg" role="status"></p>
     </div>
   </section>
@@ -593,58 +600,66 @@ $('#slp').onchange=e=>{
 };
 document.addEventListener('visibilitychange',()=>{if(sleepMode==='time')sleepCheck()});
 
-// Ruido blanco (vídeo de YouTube en paralelo) y volúmenes independientes
-const NZID='3KZfqdNtxXY',KEY2='chopin-ruido-v1';
-let nz=null,nzOn=false,nzApi=false,vol={ch:100,nz:50,slp:false};
+// Ruido generado en el propio móvil y reproducido en un <audio>: así sigue sonando con la pantalla bloqueada
+const NZ=$('#nza'),KEY2='chopin-ruido-v1';
+let nzOn=false,nzUrl=null,nzType='',vol={ch:100,nz:50,slp:false,type:'white'};
 try{Object.assign(vol,JSON.parse(localStorage.getItem(KEY2)||'{}'))}catch(e){}
 const saveVol=()=>{try{localStorage.setItem(KEY2,JSON.stringify(vol))}catch(e){}};
 function nzMsg(t,err){const m=$('#nzmsg');m.textContent=t||'';m.className=err?'err':''}
 function showVol(){
   $('#vch').value=vol.ch;$('#vchv').textContent=vol.ch;
   $('#vnz').value=vol.nz;$('#vnzv').textContent=vol.nz;
-  $('#nzslp').checked=!!vol.slp;
+  $('#nzslp').checked=!!vol.slp;$('#nzt').value=vol.type;
 }
+// Genera 20 s de ruido (mono, 44,1 kHz) que enlazan sin salto al repetirse
+function nzWav(type){
+  const sr=44100,N=sr*20,M=sr,x=new Float32Array(N+M);
+  if(type==='pink'){
+    let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
+    for(let i=0;i<x.length;i++){const w=Math.random()*2-1;
+      b0=.99886*b0+w*.0555179;b1=.99332*b1+w*.0750759;b2=.969*b2+w*.153852;b3=.8665*b3+w*.3104856;b4=.55*b4+w*.5329522;b5=-.7616*b5-w*.016898;
+      x[i]=b0+b1+b2+b3+b4+b5+b6+w*.5362;b6=w*.115926}
+  }else if(type==='brown'){
+    let l=0;for(let i=0;i<x.length;i++){const w=Math.random()*2-1;l=(l+.02*w)/1.02;x[i]=l}
+  }else{for(let i=0;i<x.length;i++)x[i]=Math.random()*2-1}
+  const o=new Float32Array(N);let pk=1e-9;
+  for(let i=0;i<N;i++){
+    o[i]=i<M?x[i]*Math.sin(i/M*Math.PI/2)+x[N+i]*Math.cos(i/M*Math.PI/2):x[i];
+    if(Math.abs(o[i])>pk)pk=Math.abs(o[i]);
+  }
+  const g=0.9/pk,buf=new ArrayBuffer(44+N*2),dv=new DataView(buf);
+  const ws=(off,t)=>{for(let i=0;i<t.length;i++)dv.setUint8(off+i,t.charCodeAt(i))};
+  ws(0,'RIFF');dv.setUint32(4,36+N*2,true);ws(8,'WAVE');ws(12,'fmt ');dv.setUint32(16,16,true);
+  dv.setUint16(20,1,true);dv.setUint16(22,1,true);dv.setUint32(24,sr,true);dv.setUint32(28,sr*2,true);dv.setUint16(32,2,true);dv.setUint16(34,16,true);
+  ws(36,'data');dv.setUint32(40,N*2,true);
+  for(let i=0;i<N;i++)dv.setInt16(44+i*2,Math.max(-1,Math.min(1,o[i]*g))*32767,true);
+  return new Blob([buf],{type:'audio/wav'});
+}
+function nzLoad(){
+  if(nzType===vol.type&&nzUrl)return;
+  if(nzUrl)URL.revokeObjectURL(nzUrl);
+  nzUrl=URL.createObjectURL(nzWav(vol.type));nzType=vol.type;NZ.src=nzUrl;
+}
+function nzPlay(){NZ.loop=true;NZ.volume=vol.nz/100;NZ.play().catch(()=>nzMsg('No se pudo iniciar el ruido. Vuelve a pulsar «Activar».',true))}
 $('#vch').oninput=e=>{vol.ch=+e.target.value;$('#vchv').textContent=vol.ch;if(sleepVol===null)V.volume=vol.ch/100;saveVol()};
-$('#vnz').oninput=e=>{vol.nz=+e.target.value;$('#vnzv').textContent=vol.nz;if(nz&&nz.setVolume)nz.setVolume(vol.nz);saveVol()};
+$('#vnz').oninput=e=>{vol.nz=+e.target.value;$('#vnzv').textContent=vol.nz;NZ.volume=vol.nz/100;saveVol()};
 $('#nzslp').onchange=e=>{vol.slp=e.target.checked;saveVol()};
+$('#nzt').onchange=e=>{vol.type=e.target.value;saveVol();if(nzOn){nzLoad();nzPlay()}};
 // Si se cambia el volumen con los controles del propio vídeo, el deslizador lo sigue (salvo durante la bajada del temporizador)
 V.addEventListener('volumechange',()=>{
   if(sleepVol!==null)return;
   const n=Math.round(V.volume*100);
   if(n!==vol.ch){vol.ch=n;$('#vch').value=n;$('#vchv').textContent=n;saveVol()}
 });
-function nzUi(){const b=$('#nzb');b.setAttribute('aria-pressed',nzOn);b.textContent=nzOn?'Desactivar':'Activar';$('#nzwrap').hidden=!nzOn}
-function nzApiLoad(cb){
-  if(window.YT&&YT.Player)return cb();
-  const prev=window.onYouTubeIframeAPIReady;
-  window.onYouTubeIframeAPIReady=()=>{if(prev)prev();cb()};
-  if(nzApi)return;nzApi=true;
-  const s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';
-  s.onerror=()=>{nzApi=false;nzOn=false;nzUi();nzMsg('No se pudo cargar YouTube (¿sin conexión?).',true)};
-  document.head.append(s);
-}
-function nzCreate(){
-  nz=new YT.Player('nzp',{
-    videoId:NZID,
-    playerVars:{playsinline:1,rel:0,autoplay:1,loop:1,playlist:NZID},
-    events:{
-      onReady:e=>{e.target.unMute();e.target.setVolume(vol.nz);if(nzOn)e.target.playVideo()},
-      onStateChange:e=>{if(e.data===YT.PlayerState.ENDED&&nzOn)e.target.playVideo()},
-      onError:()=>{nzOn=false;nzUi();nzMsg('YouTube no deja reproducir este vídeo aquí (puede tener desactivada la inserción).',true)}
-    }
-  });
-}
-function nzStart(){
-  nzOn=true;nzUi();nzMsg('');
-  if(nz&&nz.playVideo){nz.setVolume(vol.nz);nz.playVideo();return}
-  if(nz)return; // ya se está creando
-  nzApiLoad(()=>{if(!nz)nzCreate()});
-}
-function nzStop(){
-  nzOn=false;nzUi();
-  if(nz&&nz.pauseVideo)nz.pauseVideo();
-}
+function nzUi(){const b=$('#nzb');b.setAttribute('aria-pressed',nzOn);b.textContent=nzOn?'Desactivar':'Activar'}
+function nzStart(){nzOn=true;nzUi();nzMsg('');nzLoad();nzPlay()}
+function nzStop(){nzOn=false;nzUi();NZ.pause()}
 $('#nzb').onclick=()=>nzOn?nzStop():nzStart();
+// Pantalla de bloqueo: un solo reproductor; sus botones de pausa y reproducción controlan Chopin y el ruido a la vez
+if('mediaSession' in navigator){try{
+  navigator.mediaSession.setActionHandler('play',()=>{V.play().catch(()=>{});if(nzOn)NZ.play().catch(()=>{})});
+  navigator.mediaSession.setActionHandler('pause',()=>{V.pause();NZ.pause()});
+}catch(e){}}
 showVol();V.volume=vol.ch/100;nzUi();
 
 V.addEventListener('ended',()=>{
