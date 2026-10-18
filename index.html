@@ -93,6 +93,12 @@ details.d+details.d{border-top:1px solid var(--line)}
 #q li.on{font-weight:600}
 .empty{padding:18px;color:var(--mut)}
 
+/* Temporizador de reposo */
+.sleep{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 14px 10px 18px;border-bottom:1px solid var(--line)}
+.sleep label{font-weight:500}
+.sleep select{flex:0 1 auto}
+#slpst{font-size:13px;color:var(--mut);font-variant-numeric:tabular-nums}
+
 /* Código de consola */
 .steps{margin:0 0 4px;padding-left:20px;color:var(--mut);font-size:13px}
 .steps li{margin:2px 0}
@@ -167,6 +173,18 @@ code{font:12px ui-monospace,Consolas,monospace;background:var(--soft);border:1px
           <button id="rep" class="chip" aria-pressed="true">Repetir cola</button>
           <button id="qclr" class="chip danger">Vaciar cola</button>
         </div>
+      </div>
+      <div class="sleep">
+        <label for="slp">Temporizador de reposo</label>
+        <select id="slp">
+          <option value="off">Desactivado</option>
+          <option value="15">Dentro de 15 minutos</option>
+          <option value="30">Dentro de 30 minutos</option>
+          <option value="45">Dentro de 45 minutos</option>
+          <option value="60">Dentro de 1 hora</option>
+          <option value="end">Cuando la cola finalice</option>
+        </select>
+        <span id="slpst" role="status"></span>
       </div>
       <ol id="q"></ol>
     </div>
@@ -514,7 +532,42 @@ function next(){
 }
 function prev(){if(!queue.length)return;if(V.currentTime>3){V.currentTime=0;return}play(cur<=0?queue.length-1:cur-1)}
 
-V.addEventListener('ended',()=>{fails=0;next()});
+// Temporizador de reposo: 'off', 'time' (minutos) o 'end' (al terminar la cola)
+let sleepMode='off',sleepEnd=0,sleepTick=null,sleepPlayed=0,sleepVol=null;
+function sleepClear(){clearInterval(sleepTick);sleepTick=null;sleepEnd=0;if(sleepVol!==null){V.volume=sleepVol;sleepVol=null}}
+function sleepUi(){
+  const s=$('#slpst');
+  if(sleepMode==='off'){s.textContent='';return}
+  if(sleepMode==='end'){s.textContent='Se detendrá al terminar la cola.';return}
+  const r=Math.max(0,sleepEnd-Date.now()),m=Math.floor(r/60000),sec=Math.floor(r%60000/1000);
+  s.textContent='Se apagará en '+m+':'+String(sec).padStart(2,'0');
+}
+function sleepFire(why){
+  V.pause();sleepClear();sleepMode='off';$('#slp').value='off';sleepUi();msg(why);
+}
+function sleepCheck(){
+  const r=sleepEnd-Date.now();
+  if(r<=0)return sleepFire('Temporizador de reposo: reproducción detenida.');
+  if(r<=10000&&!V.paused){if(sleepVol===null)sleepVol=V.volume;V.volume=Math.max(0,sleepVol*r/10000)} // bajada suave de volumen en los últimos 10 s
+  sleepUi();
+}
+$('#slp').onchange=e=>{
+  const v=e.target.value;sleepClear();sleepPlayed=0;
+  sleepMode=v==='off'?'off':v==='end'?'end':'time';
+  if(sleepMode==='time'){sleepEnd=Date.now()+(+v)*60000;sleepTick=setInterval(sleepCheck,1000)}
+  sleepUi();
+};
+document.addEventListener('visibilitychange',()=>{if(sleepMode==='time')sleepCheck()});
+
+V.addEventListener('ended',()=>{
+  fails=0;
+  if(sleepMode==='end'){
+    sleepPlayed++;
+    // Sin aleatorio: al acabar el último de la cola. Con aleatorio: tras reproducir tantos vídeos como hay en la cola.
+    if(shuffle?sleepPlayed>=queue.length:cur>=queue.length-1)return sleepFire('Fin de la cola: reproducción detenida.');
+  }
+  next();
+});
 V.addEventListener('playing',()=>{fails=0;$('#play').textContent='Pausa'});
 V.addEventListener('pause',()=>{$('#play').textContent='Reproducir'});
 V.addEventListener('error',()=>{if(V.src&&!hls)fail('No se pudo reproducir el vídeo.')});
