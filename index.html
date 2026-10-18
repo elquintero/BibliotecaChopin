@@ -643,9 +643,9 @@ function showVol(){
   $('#vnz').value=vol.nz;$('#vnzv').textContent=vol.nz;
   $('#nzslp').checked=!!vol.slp;$('#nzt').value=vol.type;
 }
-// Genera 20 s de ruido (mono, 44,1 kHz) que enlazan sin salto al repetirse
+// Genera 30 s de ruido (mono, 44,1 kHz) que enlazan sin salto al repetirse
 function nzWav(type){
-  const sr=44100,N=sr*20,M=sr,x=new Float32Array(N+M);
+  const sr=44100,N=sr*30,M=sr,x=new Float32Array(N+M);
   if(type==='pink'){
     let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
     for(let i=0;i<x.length;i++){const w=Math.random()*2-1;
@@ -670,11 +670,43 @@ function nzWav(type){
 function nzLoad(){
   if(nzType===vol.type&&nzUrl)return;
   if(nzUrl)URL.revokeObjectURL(nzUrl);
-  nzUrl=URL.createObjectURL(nzWav(vol.type));nzType=vol.type;NZ.src=nzUrl;
+  nzUrl=URL.createObjectURL(nzWav(vol.type));nzType=vol.type;NZ.src=nzUrl;NZ2.src=nzUrl;
 }
-function nzPlay(){NZ.loop=true;NZ.volume=vol.nz/100;NZ.play().catch(()=>nzMsg('No se pudo iniciar el ruido. Vuelve a pulsar «Activar».',true))}
+// Para evitar el corte del bucle se usan dos reproductores que se solapan: cuando el actual está a punto de acabar,
+// entra el otro con un fundido cruzado de 4 s. Si el sistema no deja cambiar el volumen (iPhone), se usa el bucle normal.
+const NZ2=new Audio();NZ2.preload='auto';NZ2.setAttribute('playsinline','');
+const NZE=[NZ,NZ2],OV=4;let nzAct=0,nzFade=0,nzG=[1,0],nzT=null;
+const canVol=(()=>{const t=new Audio();t.volume=.5;return t.volume===.5})();
+function nzApplyVol(){NZE.forEach((e,i)=>{e.volume=Math.max(0,Math.min(1,vol.nz/100*nzG[i]))})}
+function nzSwapDone(){const a=NZE[nzAct];a.pause();try{a.currentTime=0}catch(e){}nzAct=1-nzAct;nzG[nzAct]=1;nzG[1-nzAct]=0;nzFade=0;nzApplyVol()}
+function nzTick(){
+  const a=NZE[nzAct],b=NZE[1-nzAct];
+  if(!nzFade){
+    if(a.paused)return;
+    const d=a.duration;
+    if(!(d&&isFinite(d)&&d-a.currentTime<=OV+1))return;
+    nzFade=performance.now();try{b.currentTime=0}catch(e){}b.play().catch(()=>{});
+  }
+  const p=Math.min(1,(performance.now()-nzFade)/(OV*1000));
+  nzG[nzAct]=Math.cos(p*Math.PI/2);nzG[1-nzAct]=Math.sin(p*Math.PI/2);nzApplyVol();
+  if(p>=1)nzSwapDone();
+}
+function nzLoop(){nzTick();nzT=nzOn?setTimeout(nzLoop,nzFade?100:1000):null}
+NZE.forEach((e,i)=>e.addEventListener('ended',()=>{
+  if(!canVol||!nzOn||i!==nzAct)return;
+  if(nzFade)return nzSwapDone();
+  const b=NZE[1-nzAct];nzG[nzAct]=0;nzG[1-nzAct]=1;nzAct=1-nzAct;nzApplyVol();try{b.currentTime=0}catch(x){}b.play().catch(()=>{});
+}));
+function nzPauseAll(){NZE.forEach(e=>e.pause());nzFade=0;nzG[nzAct]=1;nzG[1-nzAct]=0;nzApplyVol();try{NZE[1-nzAct].currentTime=0}catch(e){}}
+function nzPlay(){
+  nzFade=0;nzAct=0;nzG=[1,0];NZ.loop=!canVol;NZ2.loop=false;
+  try{NZ2.pause();NZ2.currentTime=0}catch(e){}
+  nzApplyVol();
+  NZ.play().catch(()=>nzMsg('No se pudo iniciar el ruido. Vuelve a pulsar «Activar».',true));
+  clearTimeout(nzT);if(canVol)nzT=setTimeout(nzLoop,1000);
+}
 $('#vch').oninput=e=>{vol.ch=+e.target.value;$('#vchv').textContent=vol.ch;if(sleepVol===null)V.volume=vol.ch/100;saveVol()};
-$('#vnz').oninput=e=>{vol.nz=+e.target.value;$('#vnzv').textContent=vol.nz;NZ.volume=vol.nz/100;saveVol()};
+$('#vnz').oninput=e=>{vol.nz=+e.target.value;$('#vnzv').textContent=vol.nz;nzApplyVol();saveVol()};
 $('#nzslp').onchange=e=>{vol.slp=e.target.checked;saveVol()};
 $('#nzt').onchange=e=>{vol.type=e.target.value;saveVol();if(nzOn){nzLoad();nzPlay()}};
 // Si se cambia el volumen con los controles del propio vídeo, el deslizador lo sigue (salvo durante la bajada del temporizador)
@@ -685,12 +717,12 @@ V.addEventListener('volumechange',()=>{
 });
 function nzUi(){const b=$('#nzb');b.setAttribute('aria-pressed',nzOn);b.textContent=nzOn?'Desactivar':'Activar'}
 function nzStart(){nzOn=true;nzUi();nzMsg('');nzLoad();nzPlay()}
-function nzStop(){nzOn=false;nzUi();NZ.pause()}
+function nzStop(){nzOn=false;nzUi();clearTimeout(nzT);nzPauseAll()}
 $('#nzb').onclick=()=>nzOn?nzStop():nzStart();
 // Pantalla de bloqueo: un solo reproductor; sus botones de pausa y reproducción controlan Chopin y el ruido a la vez
 if('mediaSession' in navigator){try{
-  navigator.mediaSession.setActionHandler('play',()=>{V.play().catch(()=>{});if(nzOn)NZ.play().catch(()=>{})});
-  navigator.mediaSession.setActionHandler('pause',()=>{V.pause();NZ.pause()});
+  navigator.mediaSession.setActionHandler('play',()=>{V.play().catch(()=>{});if(nzOn)NZE[nzAct].play().catch(()=>{})});
+  navigator.mediaSession.setActionHandler('pause',()=>{V.pause();nzPauseAll()});
 }catch(e){}}
 showVol();V.volume=vol.ch/100;nzUi();
 
