@@ -416,6 +416,16 @@ function load(){try{const d=JSON.parse(localStorage.getItem(KEY)||'null');if(d){
 function msg(t,err){const m=$('#msg');m.textContent=t||'';m.className=err?'err':''}
 const mins=v=>v.s&&v.e?Math.round((v.e-v.s)/60000):0;
 
+// Posición de reproducción: pista y segundo, en una clave aparte y minúscula
+const KEY3='chopin-posicion-v1';let lastPos=0,restoring=false,seekH=null;
+function savePos(t){
+  try{
+    const k=queue[cur];if(!k)return;
+    if(t===undefined){if(V.readyState<1)return;t=V.currentTime}
+    localStorage.setItem(KEY3,JSON.stringify({k,t:Math.floor(t)}));
+  }catch(e){}
+}
+
 function keyOf(url){try{const u=new URL(url);return u.pathname+'|'+u.searchParams.get('startTime')+'|'+u.searchParams.get('stopTime')}catch(e){return String(url)}}
 function mk(url,perf,title,stage,edition){let s=0,e=0;try{const u=new URL(url);s=+u.searchParams.get('startTime')||0;e=+u.searchParams.get('stopTime')||0}catch(x){}
   return{k:keyOf(url),url,perf:perf||NOP,title:title||'Vídeo',stage:stage||'',edition:edition||'',s,e}}
@@ -542,11 +552,16 @@ function enqueue(keys){const n=keys.filter(k=>!queue.includes(k));queue.push(...
 function playKeys(keys,i){queue=keys.slice();cur=-1;play(i)}
 
 function stop(){if(hls){hls.destroy();hls=null}V.removeAttribute('src');V.load()}
-function fail(why){fails++;if(fails>=3){msg(why+' Tres fallos seguidos: me detengo.',true);return}msg(why+' Paso al siguiente.',true);setTimeout(next,1500)}
-function loadSrc(url){
+function fail(why){if(restoring){restoring=false;msg(why+' Puede que el enlace haya caducado: vuelve a añadir los vídeos.',true);return}fails++;if(fails>=3){msg(why+' Tres fallos seguidos: me detengo.',true);return}msg(why+' Paso al siguiente.',true);setTimeout(next,1500)}
+function loadSrc(url,at,auto=true){
   stop();
+  if(seekH){V.removeEventListener('loadedmetadata',seekH);seekH=null}
+  if(at>0){
+    seekH=()=>{seekH=null;restoring=false;let t=at;if(V.duration&&t>V.duration-5)t=0;if(t>0)V.currentTime=t};
+    V.addEventListener('loadedmetadata',seekH,{once:true});
+  }
   if(window.Hls&&Hls.isSupported()){
-    hls=new Hls();
+    hls=new Hls(at>0?{startPosition:at}:{});
     hls.on(Hls.Events.ERROR,(e,d)=>{
       if(!d.fatal)return;
       if(d.type===Hls.ErrorTypes.NETWORK_ERROR)fail('No se pudo descargar el vídeo (enlace caducado o no permitido).');
@@ -554,14 +569,14 @@ function loadSrc(url){
       else fail('Error de reproducción.');
     });
     hls.loadSource(url);hls.attachMedia(V);
-    hls.on(Hls.Events.MANIFEST_PARSED,()=>V.play().catch(()=>{}));
-  }else{V.src=url;V.play().catch(()=>{})}
+    hls.on(Hls.Events.MANIFEST_PARSED,()=>{if(auto)V.play().catch(()=>{})});
+  }else{V.src=url;if(auto)V.play().catch(()=>{})}
 }
 function play(i){
   if(!queue.length)return;
   cur=((i%queue.length)+queue.length)%queue.length;
   const v=lib[queue[cur]];if(!v)return next();
-  msg('');save();render();loadSrc(v.url);
+  msg('');save();savePos(0);render();loadSrc(v.url);
   if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:v.title,artist:v.perf});
 }
 function next(){
@@ -671,6 +686,10 @@ V.addEventListener('ended',()=>{
   }
   next();
 });
+V.addEventListener('timeupdate',()=>{const n=Date.now();if(n-lastPos>5000){lastPos=n;savePos()}}); // como mucho una escritura cada 5 s
+V.addEventListener('pause',()=>savePos());
+document.addEventListener('visibilitychange',()=>{if(document.hidden)savePos()});
+addEventListener('pagehide',()=>savePos());
 V.addEventListener('playing',()=>{fails=0;$('#play').textContent='Pausa'});
 V.addEventListener('pause',()=>{$('#play').textContent='Reproducir'});
 V.addEventListener('error',()=>{if(V.src&&!hls)fail('No se pudo reproducir el vídeo.')});
@@ -746,7 +765,18 @@ document.addEventListener('keydown',e=>{
   if(e.key==='n')next();else if(e.key==='p')prev();
 });
 if('mediaSession' in navigator){navigator.mediaSession.setActionHandler('nexttrack',next);navigator.mediaSession.setActionHandler('previoustrack',prev)}
+function restorePos(){
+  try{
+    const d=JSON.parse(localStorage.getItem(KEY3)||'null'),k=queue[cur];
+    if(!d||cur<0||!k||d.k!==k||!lib[k])return;
+    const v=lib[k],t=Math.max(0,d.t|0);
+    restoring=true;loadSrc(v.url,t,false);
+    if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:v.title,artist:v.perf});
+    msg(t>0?'Retomado en '+Math.floor(t/60)+':'+String(t%60).padStart(2,'0')+'. Pulsa Reproducir para continuar.':'Pista recuperada. Pulsa Reproducir.');
+  }catch(e){}
+}
 load();render();if(Object.keys(lib).length)$('#add').open=false;
+restorePos();
 
 // Modo aplicación (solo con https o localhost; con file:// no se registra)
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){
