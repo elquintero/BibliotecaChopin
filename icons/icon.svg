@@ -1,16 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#000"/>
-  <path d="M212 96v164l140-82z" fill="#fff"/>
-  <g fill="#fff">
-    <rect x="80" y="300" width="64" height="112" rx="10"/>
-    <rect x="152" y="300" width="64" height="112" rx="10"/>
-    <rect x="224" y="300" width="64" height="112" rx="10"/>
-    <rect x="296" y="300" width="64" height="112" rx="10"/>
-    <rect x="368" y="300" width="64" height="112" rx="10"/>
-  </g>
-  <g fill="#000">
-    <rect x="134" y="296" width="28" height="68" rx="6"/>
-    <rect x="206" y="296" width="28" height="68" rx="6"/>
-    <rect x="350" y="296" width="28" height="68" rx="6"/>
-  </g>
+  <defs><clipPath id="c"><rect width="512" height="512" rx="112"/></clipPath></defs>
+  <g clip-path="url(#c)"><rect width="512" height="512" fill="#f3ece2"/>
+  <rect x="368" y="0" width="30" height="512" fill="#319ed1"/>
+  <circle cx="214" cy="256" r="146" fill="#232c4c"/>
+  <path d="M182 190 V322 L296 256 Z" fill="#84c1ec" stroke="#84c1ec" stroke-width="22" stroke-linejoin="round"/></g>
 </svg>
