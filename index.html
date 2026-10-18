@@ -459,8 +459,25 @@ function parse(text,def){
     let stage='';
     let ed='';
 
-    if(f.length>=4){
-      [perf,title,stage,ed]=f;
+    if(f.length>=2){
+      // El orden de los campos puede variar (intérprete | título | … o título | intérprete | …): se reconoce cada uno por su contenido
+      const known=new Set(Object.values(lib).map(v=>v.perf));
+      const isEd=x=>/competition|konkurs|edition|concurso/i.test(x);
+      const isSt=x=>/^(stage\b|final\b|round\b|etap\b|preliminar|concert of laureates|laureates)/i.test(x);
+      const isTi=x=>/\d|\b(op|no|opus)\b\.?|etude|étude|nocturne|mazurka|waltz|polonaise|impromptu|ballade|prelude|rondo|barcarolle|tarantella|fantasy|fantasie|berceuse|bolero|variations|sonata|scherzo|concerto|koncert|andante|march/i.test(x);
+      const ti=[],un=[];
+      f.forEach(x=>{
+        if(isEd(x)){if(!ed)ed=x}
+        else if(isSt(x)){if(!stage)stage=x}
+        else if(isTi(x))ti.push(x);
+        else un.push(x);
+      });
+      if(!ti.length&&un.length>=2)ti.push(un.splice(1,1)[0]); // sin pistas en el título: se respeta el orden clásico intérprete | título
+      const pi=un.findIndex(x=>known.has(x)||x===def);
+      const pf=un.splice(pi>=0?pi:0,1)[0];
+      if(pf)perf=pf;
+      title=ti.join(' · ');
+      if(un.length)title+=(title?' ':'')+'('+un.join(', ')+')'; // p. ej. el director de orquesta
     }
     else if(f.length){
       title=f[0];
