@@ -99,6 +99,18 @@ details.d+details.d{border-top:1px solid var(--line)}
 .sleep select{flex:0 1 auto}
 #slpst{font-size:13px;color:var(--mut);font-variant-numeric:tabular-nums}
 
+/* Ruido blanco y volúmenes */
+.vol{display:flex;align-items:center;gap:8px 12px;padding:10px 14px 10px 18px;border-bottom:1px solid var(--line)}
+.vol label{flex:0 0 9.5rem;font-weight:500}
+.vol input[type=range]{flex:1;min-width:0;padding:0;border:0;background:none;accent-color:var(--acc);height:28px}
+.vol output{flex:0 0 2.6em;text-align:right;color:var(--mut);font-size:13px;font-variant-numeric:tabular-nums}
+.vol.chk label{flex:1 1 auto;display:flex;align-items:center;gap:10px;font-weight:400;cursor:pointer}
+.vol input[type=checkbox]{width:18px;height:18px;padding:0;border:0;min-width:0;accent-color:var(--acc)}
+#nzwrap{padding:12px 18px 6px}
+#nzwrap iframe{display:block;width:100%;max-width:360px;height:auto;aspect-ratio:16/9;border:0;border-radius:12px;background:#000}
+#nzmsg{margin:0;padding:8px 18px 14px;font-size:13px;color:var(--mut)}#nzmsg:empty{display:none}#nzmsg.err{color:var(--err)}
+@media(max-width:520px){.vol label{flex-basis:7.5rem}}
+
 /* Código de consola */
 .steps{margin:0 0 4px;padding-left:20px;color:var(--mut);font-size:13px}
 .steps li{margin:2px 0}
@@ -187,6 +199,27 @@ code{font:12px ui-monospace,Consolas,monospace;background:var(--soft);border:1px
         <span id="slpst" role="status"></span>
       </div>
       <ol id="q"></ol>
+    </div>
+    <div class="panel qp" id="nzpanel" style="margin-top:12px">
+      <div class="bar">
+        <b>Ruido blanco</b>
+        <button id="nzb" class="chip" aria-pressed="false">Activar</button>
+      </div>
+      <div class="vol">
+        <label for="vch">Volumen Chopin</label>
+        <input id="vch" type="range" min="0" max="100" step="1" value="100">
+        <output id="vchv" for="vch">100</output>
+      </div>
+      <div class="vol">
+        <label for="vnz">Volumen ruido blanco</label>
+        <input id="vnz" type="range" min="0" max="100" step="1" value="50">
+        <output id="vnzv" for="vnz">50</output>
+      </div>
+      <div class="vol chk">
+        <label><input id="nzslp" type="checkbox"> El temporizador de reposo también apaga el ruido</label>
+      </div>
+      <div id="nzwrap" hidden><div id="nzp"></div></div>
+      <p id="nzmsg" role="status"></p>
     </div>
   </section>
   <aside>
@@ -544,6 +577,7 @@ function sleepUi(){
 }
 function sleepFire(why){
   V.pause();sleepClear();sleepMode='off';$('#slp').value='off';sleepUi();msg(why);
+  if($('#nzslp').checked)nzStop();
 }
 function sleepCheck(){
   const r=sleepEnd-Date.now();
@@ -558,6 +592,60 @@ $('#slp').onchange=e=>{
   sleepUi();
 };
 document.addEventListener('visibilitychange',()=>{if(sleepMode==='time')sleepCheck()});
+
+// Ruido blanco (vídeo de YouTube en paralelo) y volúmenes independientes
+const NZID='3KZfqdNtxXY',KEY2='chopin-ruido-v1';
+let nz=null,nzOn=false,nzApi=false,vol={ch:100,nz:50,slp:false};
+try{Object.assign(vol,JSON.parse(localStorage.getItem(KEY2)||'{}'))}catch(e){}
+const saveVol=()=>{try{localStorage.setItem(KEY2,JSON.stringify(vol))}catch(e){}};
+function nzMsg(t,err){const m=$('#nzmsg');m.textContent=t||'';m.className=err?'err':''}
+function showVol(){
+  $('#vch').value=vol.ch;$('#vchv').textContent=vol.ch;
+  $('#vnz').value=vol.nz;$('#vnzv').textContent=vol.nz;
+  $('#nzslp').checked=!!vol.slp;
+}
+$('#vch').oninput=e=>{vol.ch=+e.target.value;$('#vchv').textContent=vol.ch;if(sleepVol===null)V.volume=vol.ch/100;saveVol()};
+$('#vnz').oninput=e=>{vol.nz=+e.target.value;$('#vnzv').textContent=vol.nz;if(nz&&nz.setVolume)nz.setVolume(vol.nz);saveVol()};
+$('#nzslp').onchange=e=>{vol.slp=e.target.checked;saveVol()};
+// Si se cambia el volumen con los controles del propio vídeo, el deslizador lo sigue (salvo durante la bajada del temporizador)
+V.addEventListener('volumechange',()=>{
+  if(sleepVol!==null)return;
+  const n=Math.round(V.volume*100);
+  if(n!==vol.ch){vol.ch=n;$('#vch').value=n;$('#vchv').textContent=n;saveVol()}
+});
+function nzUi(){const b=$('#nzb');b.setAttribute('aria-pressed',nzOn);b.textContent=nzOn?'Desactivar':'Activar';$('#nzwrap').hidden=!nzOn}
+function nzApiLoad(cb){
+  if(window.YT&&YT.Player)return cb();
+  const prev=window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady=()=>{if(prev)prev();cb()};
+  if(nzApi)return;nzApi=true;
+  const s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';
+  s.onerror=()=>{nzApi=false;nzOn=false;nzUi();nzMsg('No se pudo cargar YouTube (¿sin conexión?).',true)};
+  document.head.append(s);
+}
+function nzCreate(){
+  nz=new YT.Player('nzp',{
+    videoId:NZID,
+    playerVars:{playsinline:1,rel:0,autoplay:1,loop:1,playlist:NZID},
+    events:{
+      onReady:e=>{e.target.unMute();e.target.setVolume(vol.nz);if(nzOn)e.target.playVideo()},
+      onStateChange:e=>{if(e.data===YT.PlayerState.ENDED&&nzOn)e.target.playVideo()},
+      onError:()=>{nzOn=false;nzUi();nzMsg('YouTube no deja reproducir este vídeo aquí (puede tener desactivada la inserción).',true)}
+    }
+  });
+}
+function nzStart(){
+  nzOn=true;nzUi();nzMsg('');
+  if(nz&&nz.playVideo){nz.setVolume(vol.nz);nz.playVideo();return}
+  if(nz)return; // ya se está creando
+  nzApiLoad(()=>{if(!nz)nzCreate()});
+}
+function nzStop(){
+  nzOn=false;nzUi();
+  if(nz&&nz.pauseVideo)nz.pauseVideo();
+}
+$('#nzb').onclick=()=>nzOn?nzStop():nzStart();
+showVol();V.volume=vol.ch/100;nzUi();
 
 V.addEventListener('ended',()=>{
   fails=0;
