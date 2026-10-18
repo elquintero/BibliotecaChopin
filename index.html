@@ -96,6 +96,8 @@ details.d+details.d{border-top:1px solid var(--line)}
 /* Código de consola */
 .steps{margin:0 0 4px;padding-left:20px;color:var(--mut);font-size:13px}
 .steps li{margin:2px 0}
+ul.steps{list-style:none;padding-left:0;font-size:14px;color:var(--fg)}
+ul.steps li{margin:6px 0}
 .codebar{display:flex;align-items:center;gap:12px;margin:12px 0 10px}
 #cpyst{font-size:13px;color:var(--mut);min-height:1.2em}
 pre{white-space:pre-wrap;word-break:break-all;background:var(--soft);border:1px solid var(--line);border-radius:12px;
@@ -212,6 +214,17 @@ code{font:12px ui-monospace,Consolas,monospace;background:var(--soft);border:1px
             <li>Para parar: <code>__stop=true</code></li>
           </ol>
           <pre id="snip" tabindex="0" aria-label="Código para la consola"></pre>
+        </div>
+      </details>
+      <details class="d" id="inst">
+        <summary>Instalar como app</summary>
+        <div class="dbody">
+          <div class="codebar">
+            <button id="instb" class="main" hidden>Instalar</button>
+            <span id="instmsg" role="status"></span>
+          </div>
+          <ul class="steps" id="instst"></ul>
+          <p class="hint" style="margin:10px 0 0">Android: menú de Chrome (⋮) → «Instalar aplicación». iPhone: Safari → Compartir → «Añadir a pantalla de inicio».</p>
         </div>
       </details>
     </div>
@@ -555,7 +568,7 @@ cpy.onclick=async()=>{
 };
 
 // Al abrir un menú, se deja a la vista entero (sin quedar bajo el reproductor fijo en móvil)
-['#add','#code'].forEach(id=>{
+['#add','#code','#inst'].forEach(id=>{
   const d=$(id);
   d.addEventListener('toggle',()=>{
     if(!d.open)return;
@@ -581,8 +594,34 @@ load();render();if(Object.keys(lib).length)$('#add').open=false;
 
 // Modo aplicación (solo con https o localhost; con file:// no se registra)
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){
-  window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+  window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>{window.__swErr=String((e&&e.message)||e).slice(0,90)}));
 }
+
+// Instalación: botón propio y diagnóstico de qué falta
+let dip=null;
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();dip=e;showInst()});
+addEventListener('appinstalled',()=>{dip=null;$('#instmsg').textContent='Instalada.';showInst()});
+async function showInst(){
+  const rows=[],row=(t,ok)=>rows.push((ok===undefined?'\u2022 ':ok?'\u2713 ':'\u2717 ')+t);
+  row('Conexión segura (https)',isSecureContext);
+  let reg=null;try{reg=await navigator.serviceWorker.getRegistration()}catch(e){}
+  row('Service worker '+(reg?(reg.active?'activo':'instalándose'):'no registrado'+(window.__swErr?' ('+window.__swErr+')':'')),!!(reg&&reg.active));
+  const lk=document.querySelector('link[rel=manifest]');let mt='la página no enlaza ningún manifest',mok=false;
+  if(lk){try{const r=await fetch(lk.href,{cache:'no-store'});if(r.ok){const j=await r.json();mok=true;mt='manifest correcto (id: '+(j.id||'sin id')+')'}else mt='manifest no encontrado (error '+r.status+')'}catch(e){mt='manifest ilegible'}}
+  row(mt,mok);
+  const app=matchMedia('(display-mode: standalone)').matches||navigator.standalone;
+  row('La estás abriendo '+(app?'como app instalada':'en el navegador'));
+  row('El navegador ofrece instalarla'+(dip?'':' (si no, usa su menú)'),!!dip);
+  const ul=$('#instst');ul.textContent='';rows.forEach(t=>{const li=document.createElement('li');li.textContent=t;ul.append(li)});
+  $('#instb').hidden=!dip;
+}
+$('#instb').onclick=async()=>{
+  if(!dip)return;dip.prompt();
+  let r;try{r=await dip.userChoice}catch(e){}
+  $('#instmsg').textContent=r&&r.outcome==='accepted'?'Instalando…':'Instalación cancelada.';
+  dip=null;showInst();
+};
+$('#inst').addEventListener('toggle',()=>{if($('#inst').open)showInst()});
 </script>
 </body>
 </html>
