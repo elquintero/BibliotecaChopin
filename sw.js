@@ -1,7 +1,7 @@
 /* Service worker de la Biblioteca del Concurso Chopin.
    Guarda la propia aplicación (HTML, iconos y hls.js) para que abra sin conexión.
    Los vídeos NO se guardan ni se interceptan: siempre se piden a su servidor. */
-const VERSION = 'v10'; // súbelo (v2, v3…) cuando cambies index.html para forzar la actualización
+const VERSION = 'v11'; // súbelo (v2, v3…) cuando cambies index.html para forzar la actualización
 const CACHE = 'biblioteca-chopin-' + VERSION;
 const SHELL = [
   './',

@@ -594,7 +594,7 @@ function play(i){
   cur=((i%queue.length)+queue.length)%queue.length;
   const v=lib[queue[cur]];if(!v)return next();
   msg('');save();savePos(0);render();loadSrc(v.url);
-  if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:v.title,artist:v.perf});
+  setMeta(v);
 }
 function next(){
   if(!queue.length)return;
@@ -716,14 +716,56 @@ V.addEventListener('volumechange',()=>{
   if(n!==vol.ch){vol.ch=n;$('#vch').value=n;$('#vchv').textContent=n;saveVol()}
 });
 function nzUi(){const b=$('#nzb');b.setAttribute('aria-pressed',nzOn);b.textContent=nzOn?'Desactivar':'Activar'}
-function nzStart(){nzOn=true;nzUi();nzMsg('');nzLoad();nzPlay()}
+function nzStart(){nzOn=true;nzUi();nzMsg('');nzLoad();nzPlay();metaNoise()}
 function nzStop(){nzOn=false;nzUi();clearTimeout(nzT);nzPauseAll()}
 $('#nzb').onclick=()=>nzOn?nzStop():nzStart();
-// Pantalla de bloqueo: un solo reproductor; sus botones de pausa y reproducción controlan Chopin y el ruido a la vez
-if('mediaSession' in navigator){try{
-  navigator.mediaSession.setActionHandler('play',()=>{V.play().catch(()=>{});if(nzOn)NZE[nzAct].play().catch(()=>{})});
-  navigator.mediaSession.setActionHandler('pause',()=>{V.pause();nzPauseAll()});
-}catch(e){}}
+// --- Integración con el coche (Bluetooth/USB), auriculares y pantalla de bloqueo: Media Session ---
+// Un solo reproductor para el sistema: sus botones controlan Chopin y el ruido a la vez.
+const MS='mediaSession' in navigator;
+const ART=[{src:'icon-512.png',sizes:'512x512',type:'image/png'},{src:'icon-192.png',sizes:'192x192',type:'image/png'}];
+function setMeta(v){
+  if(!MS)return;
+  try{navigator.mediaSession.metadata=new MediaMetadata({
+    title:v.title,artist:v.perf,
+    album:[v.stage,v.edition].filter(Boolean).join(' · ')||'Biblioteca del Concurso Chopin',
+    artwork:ART})}catch(e){}
+}
+function metaNoise(){ // solo ruido, sin pista cargada
+  if(!MS||V.currentSrc)return;
+  try{navigator.mediaSession.metadata=new MediaMetadata({
+    title:'Ruido '+({white:'blanco',pink:'rosa',brown:'marrón'}[vol.type]||'blanco'),
+    artist:'Biblioteca del Concurso Chopin',artwork:ART})}catch(e){}
+}
+function msState(){ // «reproduciendo» si suena Chopin o el ruido
+  if(!MS)return;
+  const on=!V.paused||(nzOn&&!NZE[nzAct].paused);
+  navigator.mediaSession.playbackState=on?'playing':'paused';
+}
+function msPos(){ // barra de progreso en el coche y en la pantalla de bloqueo
+  if(!MS||!navigator.mediaSession.setPositionState)return;
+  try{
+    const d=V.duration;
+    if(!d||!isFinite(d)){navigator.mediaSession.setPositionState();return}
+    navigator.mediaSession.setPositionState({duration:d,playbackRate:V.playbackRate||1,position:Math.min(d,Math.max(0,V.currentTime))});
+  }catch(e){}
+}
+['loadedmetadata','durationchange','seeked','playing','pause','ratechange'].forEach(ev=>V.addEventListener(ev,msPos));
+['playing','pause','emptied'].forEach(ev=>V.addEventListener(ev,msState));
+NZE.forEach(e=>['play','pause'].forEach(ev=>e.addEventListener(ev,msState)));
+if(MS){
+  const set=(a,f)=>{try{navigator.mediaSession.setActionHandler(a,f)}catch(e){}};
+  const resume=()=>{ // muchos coches mandan «play» al conectarse: retoma donde lo dejaste
+    if(!V.currentSrc){if(queue.length)play(cur>=0?cur:0)}else V.play().catch(()=>{});
+    if(nzOn)NZE[nzAct].play().catch(()=>{});
+  };
+  const halt=()=>{V.pause();nzPauseAll()};
+  const jump=d=>{if(V.duration&&isFinite(V.duration)){V.currentTime=Math.max(0,Math.min(V.duration,V.currentTime+d));msPos()}};
+  set('play',resume);set('pause',halt);set('stop',halt);
+  set('previoustrack',prev);set('nexttrack',next);
+  set('seekbackward',e=>jump(-((e&&e.seekOffset)||10)));
+  set('seekforward',e=>jump((e&&e.seekOffset)||10));
+  set('seekto',e=>{if(e.seekTime==null)return;if(e.fastSeek&&V.fastSeek)V.fastSeek(e.seekTime);else V.currentTime=e.seekTime;msPos()});
+}
 showVol();V.volume=vol.ch/100;nzUi();
 
 V.addEventListener('ended',()=>{
@@ -813,14 +855,13 @@ document.addEventListener('keydown',e=>{
   if(/^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)||e.ctrlKey||e.metaKey||e.altKey)return;
   if(e.key==='n')next();else if(e.key==='p')prev();
 });
-if('mediaSession' in navigator){navigator.mediaSession.setActionHandler('nexttrack',next);navigator.mediaSession.setActionHandler('previoustrack',prev)}
 function restorePos(){
   try{
     const d=JSON.parse(localStorage.getItem(KEY3)||'null'),k=queue[cur];
     if(!d||cur<0||!k||d.k!==k||!lib[k])return;
     const v=lib[k],t=Math.max(0,d.t|0);
     restoring=true;loadSrc(v.url,t,false);
-    if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:v.title,artist:v.perf});
+    setMeta(v);
     msg(t>0?'Retomado en '+Math.floor(t/60)+':'+String(t%60).padStart(2,'0')+'. Pulsa Reproducir para continuar.':'Pista recuperada. Pulsa Reproducir.');
   }catch(e){}
 }
